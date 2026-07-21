@@ -107,8 +107,12 @@ Gere um resumo do documento de EXATAMENTE 1 linha.`;
     const categoria = result.categoria || "Nao-Classificado";
     const resumo = result.resumo || "Não foi possível gerar um resumo.";
 
-    // Define os caminhos das pastas de destino
-    const storageDir = path.join(process.cwd(), "storage");
+    // Define os caminhos das pastas de destino (usa /tmp na Vercel para permitir escrita)
+    const isVercel = process.env.VERCEL === "1";
+    const storageDir = isVercel
+      ? path.join("/tmp", "storage")
+      : path.join(process.cwd(), "storage");
+      
     const clientDir = path.join(storageDir, safeClienteId);
     const categoryDir = path.join(clientDir, categoria);
 

@@ -31,3 +31,6 @@ next-env.d.ts
 # Storage local (Ignora todo o conteúdo gerado em execução, mantendo apenas a pasta base)
 /storage/*
 !/storage/.gitkeep
+
+.vercel
+.env*
