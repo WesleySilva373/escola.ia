@@ -1,6 +1,6 @@
 # Agente Organizador de Documentos - Escol.Ai
 
-Este é um projeto prático desenvolvido como teste técnico para a **Escol.Ai**. Trata-se de uma aplicação de inteligência artificial em formato de chat/upload web que organiza e categoriza documentos de clientes de forma extremamente simples, enxuta e performática.
+Este é um projeto prático desenvolvido como teste técnico para a **Escol.Ai**. Trata-se de uma aplicação de inteligência artificial em formato de upload web que organiza e categoriza documentos de clientes de forma simples, enxuta e performática.
 
 ---
 
@@ -10,78 +10,109 @@ Este é um projeto prático desenvolvido como teste técnico para a **Escol.Ai**
 - **Linguagem:** TypeScript
 - **Estilização:** Tailwind CSS (Vanilla CSS com Design Dark Moderno)
 - **IA SDK:** `@google/genai` (SDK Oficial do Google)
-- **Modelo de IA:** `gemini-2.5-flash` (Sucessor atualizado do `gemini-1.5-flash`, garantindo suporte ativo e compatibilidade completa com Structured Outputs).
+- **Modelo de IA:** `gemini-2.5-flash` (Com suporte a Structured Outputs)
+- **Persistência de Arquivos:** Supabase Storage (Bucket privado)
+- **Banco de Dados:** Supabase PostgreSQL
 
 ---
 
-## 💡 Decisões de Arquitetura e Estrutura do Projeto
+## ☁️ Por que o Filesystem Local não é Persistente na Vercel?
 
-O projeto segue estritamente a estrutura solicitada, livre de pastas ou configurações complexas desnecessárias:
+Em plataformas de hospedagem serverless como a **Vercel**, cada requisição pode rodar em um container efêmero e isolado. O sistema de arquivos local (`fs` ou `/tmp`) é temporário e descartado sempre que o container é reciclado ou entra em hibernação. 
 
-```text
-meu-organizador/
-├── app/
-│   ├── api/
-│   │   └── processar/
-│   │       └── route.ts     # Rota que processa com Gemini e salva arquivos/logs
-│   ├── layout.tsx           # Layout global da página (fonte Inter e meta tags)
-│   └── page.tsx             # Interface SPA moderna de upload e listagem de status
-├── storage/
-│   └── .gitkeep             # Mantém a pasta de storage no Git sem enviar arquivos locais
-├── .env.local               # Variáveis de ambiente locais (ignorado no Git)
-├── .gitignore               # Regras de segurança do Git
-├── package.json             # Dependências e scripts do projeto
-└── README.md                # Documentação técnica do repositório
+Por esse motivo, salvar arquivos ou históricos de documentos em disco local causa perda permanente de dados e impede a consulta posterior. A solução adotada foi substituir o sistema de arquivos local por **Supabase Storage** para armazenamento de arquivos e **Supabase PostgreSQL** para o histórico dos documentos.
+
+---
+
+## 🗄️ Configuração do Supabase
+
+### 1. Criar a Tabela no Banco de Dados (PostgreSQL)
+
+Execute o seguinte SQL no **SQL Editor** do Supabase:
+
+```sql
+CREATE TABLE documentos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  cliente_id text NOT NULL,
+  nome_original text NOT NULL,
+  nome_armazenado text NOT NULL,
+  categoria text NOT NULL,
+  resumo text NOT NULL,
+  storage_path text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Índice para otimizar as consultas por cliente_id
+CREATE INDEX idx_documentos_cliente_id ON documentos(cliente_id);
 ```
 
----
+### 2. Criar o Bucket Privado no Supabase Storage
 
-## 🪙 Modelo de IA e Custo por Documento
+1. Acesse o painel do Supabase > **Storage**.
+2. Clique em **New Bucket**.
+3. Nomeie o bucket exatamente como: `documentos`.
+4. Mantenha a opção **Public Bucket** desativada (Bucket Privado).
 
-Optamos pela utilização da família **Gemini Flash (`gemini-2.5-flash` / `gemini-1.5-flash`)** pelos seguintes fatores:
-
-1. **Multimodalidade Nativa:** O modelo processa arquivos de imagem, PDF e texto sem necessidade de bibliotecas de OCR externas pesadas.
-2. **Saída Estruturada (JSON Schema):** O SDK obriga a resposta a vir exatamente no formato `{"categoria": string, "resumo": string}`, o que zera a taxa de falha de parser no backend.
-3. **Custo Estimado por Documento:**
-   - **Input (Entrada):** ~$0.075 por milhão de tokens.
-   - **Output (Saída):** ~$0.30 por milhão de tokens.
-   - **Custo Médio:** Para um documento comum (PDF de 2 páginas ou imagem contendo ~2000 tokens de entrada e ~100 de saída), o custo estimado é de aproximadamente **$0,00015 USD por arquivo** (cerca de R$ 0,00085). Isso viabiliza a solução para processamento em larga escala.
+Os arquivos serão armazenados na seguinte estrutura de pastas:
+- `clienteId/categoria/nomeDoArquivo` (Exemplo: `empresa-orbe/Contratos/contrato_1710000000.pdf`)
+- `clienteId/README.md` (Exemplo: `empresa-orbe/README.md`)
 
 ---
 
-## 🔒 LGPD e Limitações em Ambientes Serverless
+## 🔑 Variáveis de Ambiente
 
-### Segurança e LGPD
-*   **Privacidade:** Os documentos carregados (comprovantes, CNHs, contratos) contêm informações sob proteção da LGPD. Em ambiente de produção, é recomendável criptografar os dados em repouso e adotar políticas rígidas de descarte/expiração de arquivos.
-*   **Ambiente Local:** O arquivo `.env.local` está devidamente listado no `.gitignore` para prevenir qualquer vazamento acidental da chave `GEMINI_API_KEY`.
+Crie ou edite o arquivo `.env.local` na raiz do projeto com as seguintes variáveis:
 
-### Limitação Serverless (Vercel, Netlify, Lambda)
-*   **Sistemas de Arquivos Efêmeros:** O código utiliza o módulo `fs` do Node.js para salvar arquivos na pasta `/storage`. Em plataformas serverless como a Vercel, o disco local é temporário e somente-leitura em várias partes, significando que os uploads serão apagados sempre que a instância do container for reciclada.
-*   **Solução para Produção:** Recomenda-se migrar o armazenamento local para um Object Storage na nuvem (como **AWS S3** ou **Supabase Storage**) e registrar os logs em um banco de dados persistente (PostgreSQL, MongoDB, etc.).
-
----
-
-## 🚀 Como Rodar o Projeto Localmente
-
-### 1. Pré-requisitos
-Certifique-se de ter o **Node.js** (versão 18 ou superior) instalado em sua máquina.
-
-### 2. Configurar a Chave de API
-Crie um arquivo `.env.local` na raiz do projeto (caso não exista) e adicione sua chave obtida no [Google AI Studio](https://aistudio.google.com/):
 ```env
-GEMINI_API_KEY="SUA_CHAVE_DE_API_AQUI"
+GEMINI_API_KEY="SUA_CHAVE_GEMINI_AQUI"
+SUPABASE_URL="https://seuprompt.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY="SUA_CHAVE_SERVICE_ROLE_AQUI"
 ```
 
-### 3. Instalar as Dependências
-Execute o comando abaixo para instalar as bibliotecas do projeto:
-```bash
-npm install
-```
+> **IMPORTANTE:** A `SUPABASE_SERVICE_ROLE_KEY` é utilizada **apenas no backend** para permitir a gravação e geração de URLs assinadas no bucket privado. Esta chave nunca é enviada ao navegador.
 
-### 4. Iniciar o Servidor de Desenvolvimento
-Inicie a aplicação local:
-```bash
-npm run dev
-```
+---
 
-Abra [http://localhost:3000](http://localhost:3000) no seu navegador para interagir com a aplicação.
+## 🚀 Como Executar Localmente
+
+1. **Clone o repositório e instale as dependências:**
+   ```bash
+   npm install
+   ```
+
+2. **Configure o `.env.local`** conforme descrito na seção anterior.
+
+3. **Inicie o servidor de desenvolvimento:**
+   ```bash
+   npm run dev
+   ```
+
+4. **Acesse no navegador:** [http://localhost:3000](http://localhost:3000)
+
+---
+
+## 🌐 Como Realizar o Deploy na Vercel
+
+1. Suba o projeto para um repositório no GitHub/GitLab.
+2. Importe o projeto no painel da **Vercel**.
+3. Em **Environment Variables**, adicione:
+   - `GEMINI_API_KEY`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+4. Clique em **Deploy**.
+
+---
+
+## 🪙 Observação sobre Custos do Gemini
+
+Os preços e custos por documento do modelo `gemini-2.5-flash` variam de acordo com o volume de tokens (entrada e saída), região e modalidades utilizadas. Consulte a [documentação oficial de preços do Google AI Studio](https://ai.google.dev/pricing) para obter os valores exatos e atualizados.
+
+---
+
+## 🔒 Segurança & Limitações Restantes
+
+- **Segurança:** As URLs para visualização dos arquivos são geradas como **URLs Assinadas Temporárias** (com validade de 60 minutos), garantindo acesso seguro a arquivos em buckets privados sem expor o bucket publicamente.
+- **Limitações e Melhorias Futuras:**
+  - Adicionar suporte a autenticação de usuários (caso necessário no futuro).
+  - Adicionar paginação na lista de histórico para clientes com centenas de documentos.
+  - Implementar busca por palavra-chave nos resumos dos documentos.

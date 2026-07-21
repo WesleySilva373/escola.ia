@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import fs from "fs/promises";
 import path from "path";
+import { getSupabaseClient } from "@/utils/supabase";
 
-// Inicializa a API do Google Gemini se a chave estiver presente
 const apiKey = process.env.GEMINI_API_KEY || "";
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+
+// MIME types e extensões permitidas
+const ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "text/plain",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+]);
+
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".txt", ".png", ".jpg", ".jpeg"]);
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 export async function POST(request: Request) {
   try {
@@ -17,43 +29,68 @@ export async function POST(request: Request) {
     }
 
     const formData = await request.formData();
-    const clienteId = formData.get("clienteId") as string;
-    const file = formData.get("file") as File;
+    const clienteId = formData.get("clienteId") as string | null;
+    const file = formData.get("file") as File | null;
 
-    if (!clienteId || !file) {
+    // Validation 1: clienteId e arquivo obrigatórios
+    if (!clienteId || !clienteId.trim()) {
       return NextResponse.json(
-        { error: "clienteId e file são obrigatórios." },
+        { error: "O ID do cliente é obrigatório." },
         { status: 400 }
       );
     }
 
-    // Sanitiza clienteId simples para evitar directory traversal
-    const safeClienteId = clienteId.replace(/[^a-zA-Z0-9-_]/g, "");
+    if (!file) {
+      return NextResponse.json(
+        { error: "O arquivo é obrigatório." },
+        { status: 400 }
+      );
+    }
+
+    const safeClienteId = clienteId.trim().replace(/[^a-zA-Z0-9-_]/g, "");
     if (!safeClienteId) {
       return NextResponse.json(
-        { error: "clienteId inválido." },
+        { error: "ID do cliente inválido. Use apenas letras, números, hífen ou underline." },
         { status: 400 }
       );
     }
 
-    // Lê o conteúdo do arquivo em buffer
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    if (safeClienteId.length > 100) {
+      return NextResponse.json(
+        { error: "ID do cliente excede o tamanho máximo de 100 caracteres." },
+        { status: 400 }
+      );
+    }
 
-    // Envia o arquivo para a API do Gemini 1.5 Flash
-    // Suporta PDF, Imagens (PNG, JPG) e TXT
-    let base64Data = buffer.toString("base64");
+    // Validation 2: Tamanho máximo de 10 MB
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: "O arquivo excede o limite máximo permitido de 10 MB." },
+        { status: 400 }
+      );
+    }
+
+    // Validation 3: Tipo de arquivo (MIME type e Extensão)
+    const ext = path.extname(file.name).toLowerCase();
     let mimeType = file.type;
 
-    // Garante fallback de mimeType caso não venha no File
-    if (!mimeType) {
-      const ext = path.extname(file.name).toLowerCase();
+    if (!mimeType || mimeType === "application/octet-stream") {
       if (ext === ".pdf") mimeType = "application/pdf";
       else if (ext === ".png") mimeType = "image/png";
       else if (ext === ".jpg" || ext === ".jpeg") mimeType = "image/jpeg";
       else if (ext === ".txt") mimeType = "text/plain";
-      else mimeType = "application/octet-stream";
     }
+
+    if (!ALLOWED_EXTENSIONS.has(ext) || !ALLOWED_MIME_TYPES.has(mimeType)) {
+      return NextResponse.json(
+        { error: "Formato de arquivo não suportado. Envie apenas PDF, TXT, PNG, JPG ou JPEG." },
+        { status: 400 }
+      );
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64Data = buffer.toString("base64");
 
     const prompt = `Analise o documento fornecido.
 Classifique o documento em uma das seguintes categorias: "Contratos", "Financeiro", "Documentos Pessoais", "Comprovantes" ou "Nao-Classificado".
@@ -105,69 +142,123 @@ Gere um resumo do documento de EXATAMENTE 1 linha.`;
     };
 
     const categoria = result.categoria || "Nao-Classificado";
-    const resumo = result.resumo || "Não foi possível gerar um resumo.";
+    // Garantir que o resumo tenha apenas uma linha removendo quebras de linha
+    const rawResumo = result.resumo || "Não foi possível gerar um resumo.";
+    const resumo = rawResumo.replace(/[\r\n]+/g, " ").trim();
 
-    // Define os caminhos das pastas de destino (usa /tmp na Vercel para permitir escrita)
-    const isVercel = process.env.VERCEL === "1";
-    const storageDir = isVercel
-      ? path.join("/tmp", "storage")
-      : path.join(process.cwd(), "storage");
-      
-    const clientDir = path.join(storageDir, safeClienteId);
-    const categoryDir = path.join(clientDir, categoria);
-
-    // Garante a existência das pastas recursivamente
-    await fs.mkdir(categoryDir, { recursive: true });
-
-    // Trata duplicatas (se o arquivo já existir, adiciona timestamp)
+    // Tratamento de nomes armazenados (adiciona timestamp para evitar colisão no storage)
     const originalName = file.name;
-    const ext = path.extname(originalName);
-    const base = path.basename(originalName, ext);
-    let finalFileName = originalName;
-    let targetFilePath = path.join(categoryDir, finalFileName);
+    const baseName = path.basename(originalName, ext);
+    const timestamp = Date.now();
+    const nomeArmazenado = `${baseName}_${timestamp}${ext}`;
 
-    const fileExists = await fs
-      .access(targetFilePath)
-      .then(() => true)
-      .catch(() => false);
+    // Caminho no bucket: clienteId/categoria/nomeDoArquivo
+    const storagePath = `${safeClienteId}/${categoria}/${nomeArmazenado}`;
 
-    if (fileExists) {
-      const timestamp = Date.now();
-      finalFileName = `${base}_${timestamp}${ext}`;
-      targetFilePath = path.join(categoryDir, finalFileName);
+    const supabase = getSupabaseClient();
+
+    // 1. Enviar arquivo para o Supabase Storage
+    const { error: storageError } = await supabase.storage
+      .from("documentos")
+      .upload(storagePath, buffer, {
+        contentType: mimeType,
+        upsert: false,
+      });
+
+    if (storageError) {
+      console.error("Erro no envio para o Supabase Storage:", storageError);
+      return NextResponse.json(
+        { error: `Erro ao armazenar o arquivo: ${storageError.message}` },
+        { status: 500 }
+      );
     }
 
-    // Salva o arquivo no disco
-    await fs.writeFile(targetFilePath, buffer);
+    // 2. Inserir registro na tabela 'documentos'
+    const { data: dbData, error: dbError } = await supabase
+      .from("documentos")
+      .insert({
+        cliente_id: safeClienteId,
+        nome_original: originalName,
+        nome_armazenado: nomeArmazenado,
+        categoria: categoria,
+        resumo: resumo,
+        storage_path: storagePath,
+      })
+      .select()
+      .single();
 
-    // Atualiza/Cria o arquivo README.md do cliente
-    const readmePath = path.join(clientDir, "README.md");
-    const readmeExists = await fs
-      .access(readmePath)
-      .then(() => true)
-      .catch(() => false);
+    // Tratamento de falha no banco: Remove o arquivo do Storage para evitar órfãos
+    if (dbError) {
+      console.error("Erro ao salvar registro no banco de dados, removendo arquivo do Storage...", dbError);
+      await supabase.storage.from("documentos").remove([storagePath]);
 
-    if (!readmeExists) {
-      const header = `# Histórico de Documentos - Cliente: ${safeClienteId}\n\n| Data/Hora | Arquivo | Categoria | Resumo |\n| --- | --- | --- | --- |\n`;
-      await fs.writeFile(readmePath, header);
+      return NextResponse.json(
+        { error: `Erro ao registrar documento no banco: ${dbError.message}` },
+        { status: 500 }
+      );
     }
 
-    // Formata data e hora (YYYY-MM-DD HH:mm)
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const formattedDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-      now.getDate()
-    )} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    // 3. Atualizar README.md no Supabase Storage
+    let warningMsg: string | undefined = undefined;
 
-    // Adiciona a linha de log
-    const logLine = `| ${formattedDate} | ${finalFileName} | ${categoria} | ${resumo} |\n`;
-    await fs.appendFile(readmePath, logLine);
+    try {
+      // Consulta todos os documentos do cliente ordenados do mais antigo ao mais recente para montar o histórico do README
+      const { data: allDocs, error: fetchDocsError } = await supabase
+        .from("documentos")
+        .select("*")
+        .eq("cliente_id", safeClienteId)
+        .order("created_at", { ascending: true });
+
+      if (fetchDocsError) {
+        throw fetchDocsError;
+      }
+
+      const pad = (n: number) => String(n).padStart(2, "0");
+      let readmeLines = [
+        `# Histórico de Documentos - Cliente: ${safeClienteId}`,
+        "",
+        "| Data/Hora | Arquivo | Categoria | Resumo |",
+        "| --- | --- | --- | --- |",
+      ];
+
+      (allDocs || []).forEach((doc) => {
+        const d = new Date(doc.created_at);
+        const formattedDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+          d.getDate()
+        )} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const fileNameToShow = doc.nome_armazenado || doc.nome_original;
+        readmeLines.push(
+          `| ${formattedDate} | ${fileNameToShow} | ${doc.categoria} | ${doc.resumo} |`
+        );
+      });
+
+      const readmeContent = readmeLines.join("\n") + "\n";
+      const readmePath = `${safeClienteId}/README.md`;
+
+      const { error: readmeError } = await supabase.storage
+        .from("documentos")
+        .upload(readmePath, Buffer.from(readmeContent, "utf-8"), {
+          contentType: "text/markdown",
+          upsert: true,
+        });
+
+      if (readmeError) {
+        console.error("Aviso: Falha ao salvar README.md no Storage:", readmeError);
+        warningMsg = "Documento registrado, porém o README.md não pôde ser atualizado.";
+      }
+    } catch (readmeErr: any) {
+      console.error("Erro ao gerar/salvar README.md do cliente:", readmeErr);
+      warningMsg = "Documento registrado, porém houve um erro ao reconstruir o README.md.";
+    }
 
     return NextResponse.json({
       success: true,
-      nomeArquivo: finalFileName,
+      id: dbData?.id,
+      nomeArquivo: originalName,
+      nomeArmazenado,
       categoria,
       resumo,
+      warning: warningMsg,
     });
   } catch (error: any) {
     console.error("Erro no processamento:", error);

@@ -1,5 +1,3 @@
-"use strict";
-
 "use client";
 
 import React, { useState, useRef } from "react";
@@ -12,30 +10,73 @@ interface FileStatus {
   categoria?: string;
   resumo?: string;
   errorMsg?: string;
+  rawFile: File;
+}
+
+interface HistoricoDocumento {
+  id: string;
+  nomeArquivo: string;
+  categoria: string;
+  resumo: string;
+  createdAt: string;
+  url: string;
 }
 
 export default function Home() {
   const [clienteId, setClienteId] = useState("");
   const [files, setFiles] = useState<FileStatus[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Estados do Histórico
+  const [historico, setHistorico] = useState<HistoricoDocumento[] | null>(null);
+  const [isFetchingHistory, setIsFetchingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      const newFiles = Array.from(e.target.files).map((file) => ({
+      const newFiles: FileStatus[] = Array.from(e.target.files).map((file) => ({
         id: Math.random().toString(36).substring(2, 9),
         name: file.name,
         size: file.size,
         status: "idle" as const,
         rawFile: file,
       }));
-      // @ts-ignore
       setFiles((prev) => [...prev, ...newFiles]);
     }
   };
 
   const handleRemoveFile = (id: string) => {
     setFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const handleFetchHistory = async () => {
+    if (!clienteId.trim()) {
+      alert("Por favor, informe o ID do Cliente para buscar o histórico.");
+      return;
+    }
+
+    setIsFetchingHistory(true);
+    setHistoryError(null);
+
+    try {
+      const res = await fetch(`/api/documentos?clienteId=${encodeURIComponent(clienteId.trim())}`);
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setHistorico(data.documentos || []);
+      } else {
+        setHistoryError(data.error || "Não foi possível carregar o histórico.");
+        setHistorico([]);
+      }
+    } catch (err: any) {
+      console.error("Erro ao buscar histórico:", err);
+      setHistoryError("Erro de conexão ao buscar histórico.");
+      setHistorico([]);
+    } finally {
+      setIsFetchingHistory(false);
+    }
   };
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -63,7 +104,6 @@ export default function Home() {
 
       const formData = new FormData();
       formData.append("clienteId", clienteId);
-      // @ts-ignore
       formData.append("file", currentFile.rawFile);
 
       try {
@@ -83,7 +123,7 @@ export default function Home() {
                     status: "success",
                     categoria: data.categoria,
                     resumo: data.resumo,
-                    name: data.nomeArquivo, // Atualiza nome caso tenha sido renomeado
+                    name: data.nomeArquivo, // Atualiza nome com a informação retornada
                   }
                 : f
             )
@@ -117,6 +157,9 @@ export default function Home() {
     }
 
     setIsProcessing(false);
+
+    // Atualiza e exibe automaticamente o histórico do cliente após o envio dos documentos
+    handleFetchHistory();
   };
 
   const getCategoryColor = (cat?: string) => {
@@ -140,6 +183,21 @@ export default function Home() {
     return `${(bytes / 1048576).toFixed(1)} MB`;
   };
 
+  const formatDate = (isoString: string) => {
+    try {
+      const date = new Date(isoString);
+      return new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(date);
+    } catch {
+      return isoString;
+    }
+  };
+
   return (
     <main className="container mx-auto min-h-screen px-4 py-12 flex flex-col items-center justify-center max-w-4xl">
       {/* Header */}
@@ -155,21 +213,46 @@ export default function Home() {
       {/* Main card */}
       <div className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-6">
         <form onSubmit={handleUpload} className="space-y-6">
-          {/* Cliente ID */}
+          {/* Cliente ID & Botão Buscar Histórico */}
           <div className="space-y-2">
             <label htmlFor="clienteId" className="block text-sm font-semibold text-slate-200">
               Identificação do Cliente
             </label>
-            <input
-              id="clienteId"
-              type="text"
-              required
-              disabled={isProcessing}
-              placeholder="Ex: cliente-01"
-              value={clienteId}
-              onChange={(e) => setClienteId(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500 transition-all text-slate-100 placeholder:text-slate-600"
-            />
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                id="clienteId"
+                type="text"
+                required
+                disabled={isProcessing}
+                placeholder="Ex: cliente-01"
+                value={clienteId}
+                onChange={(e) => setClienteId(e.target.value)}
+                className="flex-1 px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500 transition-all text-slate-100 placeholder:text-slate-600"
+              />
+              <button
+                type="button"
+                disabled={isFetchingHistory || !clienteId.trim()}
+                onClick={handleFetchHistory}
+                className="px-5 py-3 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] border border-slate-700 text-slate-200 font-medium rounded-xl transition-all shadow-md flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isFetchingHistory ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-violet-400" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>Buscando...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 text-violet-400">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                    </svg>
+                    <span>Buscar histórico</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Upload Input Area */}
@@ -216,7 +299,7 @@ export default function Home() {
                   Clique para selecionar os arquivos
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Suporta múltiplos PDFs, Imagens (PNG, JPG) e TXT
+                  Suporta múltiplos PDFs, Imagens (PNG, JPG) e TXT (máx. 10 MB cada)
                 </p>
               </div>
             </div>
@@ -384,6 +467,83 @@ export default function Home() {
             )}
           </button>
         </form>
+
+        {/* Seção de Exibição do Histórico */}
+        {historico !== null && (
+          <div className="pt-6 border-t border-slate-800/80 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-violet-400">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Histórico de Documentos do Cliente
+              </h2>
+              <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 border border-slate-700 text-slate-400 rounded-full">
+                {historico.length} {historico.length === 1 ? "documento" : "documentos"}
+              </span>
+            </div>
+
+            {historyError && (
+              <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+                {historyError}
+              </div>
+            )}
+
+            {historico.length === 0 && !historyError ? (
+              <div className="p-8 text-center bg-slate-950/30 border border-slate-800/60 rounded-xl space-y-2">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-slate-600 mx-auto">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+                <p className="text-sm font-medium text-slate-400">Nenhum documento encontrado para este cliente.</p>
+                <p className="text-xs text-slate-600">Envie novos arquivos acima para iniciar o histórico.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-800/60 rounded-xl border border-slate-800 bg-slate-950/40 overflow-hidden">
+                {historico.map((doc) => (
+                  <div key={doc.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-900/30 transition-colors">
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold text-slate-100 truncate max-w-xs">
+                          {doc.nomeArquivo}
+                        </span>
+                        <span className={`px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${getCategoryColor(doc.categoria)}`}>
+                          {doc.categoria}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 line-clamp-2 italic">
+                        &ldquo;{doc.resumo}&rdquo;
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {formatDate(doc.createdAt)}
+                      </p>
+                    </div>
+
+                    {doc.url ? (
+                      <a
+                        href={doc.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 text-violet-300 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 self-start sm:self-center flex-shrink-0"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                        </svg>
+                        Visualizar arquivo
+                      </a>
+                    ) : (
+                      <span className="text-xs text-slate-600 italic self-start sm:self-center">
+                        URL indisponível
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </main>
   );

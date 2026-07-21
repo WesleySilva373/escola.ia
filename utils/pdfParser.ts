@@ -1,7 +1,4 @@
-import _pdf from "pdf-parse";
-
-// Converte o tipo importado para qualquer (ou tipo chamável) para satisfazer o compilador do TypeScript
-const pdf = _pdf as any;
+import PDFParse from "pdf-parse";
 
 /**
  * Função utilitária para extrair texto de um buffer de PDF usando a biblioteca 'pdf-parse'.
@@ -11,10 +8,24 @@ const pdf = _pdf as any;
  */
 export async function parsePdf(buffer: Buffer): Promise<string> {
   try {
-    const data = await pdf(buffer);
-    return data.text;
+    // Compatibilidade com CommonJS / ESM em bundlers como Next.js/Turbopack
+    const parse = typeof PDFParse === "function" ? PDFParse : (PDFParse as any)?.default || require("pdf-parse");
+    
+    // Suporte para a versão clássica do pdf-parse e para novas instâncias
+    if (typeof parse === "function") {
+      const data = await parse(buffer);
+      return data.text;
+    }
+
+    const parser = new parse({ data: new Uint8Array(buffer) });
+    const result = await parser.getText();
+    if (typeof parser.destroy === "function") {
+      await parser.destroy();
+    }
+    return result.text;
   } catch (error) {
     console.error("Erro ao analisar o PDF com pdf-parse:", error);
     throw error;
   }
 }
+
