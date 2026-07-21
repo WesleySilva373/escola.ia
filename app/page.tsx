@@ -32,6 +32,9 @@ export default function Home() {
   const [isFetchingHistory, setIsFetchingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
+  // Estado do Modal de Visualização de Arquivo (Print/PDF/TXT)
+  const [selectedDoc, setSelectedDoc] = useState<HistoricoDocumento | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -522,17 +525,17 @@ export default function Home() {
                     </div>
 
                     {doc.url ? (
-                      <a
-                        href={doc.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 text-violet-300 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 self-start sm:self-center flex-shrink-0"
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDoc(doc)}
+                        className="px-3.5 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 hover:border-violet-500/50 text-violet-300 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 self-start sm:self-center flex-shrink-0 active:scale-95 shadow-sm"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 text-violet-400">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
                         Visualizar arquivo
-                      </a>
+                      </button>
                     ) : (
                       <span className="text-xs text-slate-600 italic self-start sm:self-center">
                         URL indisponível
@@ -545,6 +548,106 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Modal de Pré-Visualização (Print / PDF / Documento) */}
+      {selectedDoc && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fadeIn"
+          onClick={() => setSelectedDoc(null)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between gap-4 bg-slate-950/40">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-bold text-slate-100 truncate">
+                    {selectedDoc.nomeArquivo}
+                  </h3>
+                  <span className={`px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${getCategoryColor(selectedDoc.categoria)}`}>
+                    {selectedDoc.categoria}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1 italic line-clamp-1">
+                  &ldquo;{selectedDoc.resumo}&rdquo;
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedDoc(null)}
+                className="p-2 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-xl transition-colors"
+                title="Fechar"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Modal Content / Preview Area */}
+            <div className="flex-1 overflow-auto p-4 bg-slate-950/60 flex items-center justify-center min-h-[300px]">
+              {/\.(png|jpe?g|gif|webp)$/i.test(selectedDoc.nomeArquivo) ? (
+                <div className="relative max-w-full max-h-full flex items-center justify-center">
+                  {/* Visualização de Print / Imagem */}
+                  <img
+                    src={selectedDoc.url}
+                    alt={selectedDoc.nomeArquivo}
+                    className="max-h-[65vh] w-auto object-contain rounded-lg border border-slate-800 shadow-xl"
+                  />
+                </div>
+              ) : /\.pdf$/i.test(selectedDoc.nomeArquivo) ? (
+                /* Visualização de PDF */
+                <iframe
+                  src={selectedDoc.url}
+                  className="w-full h-[65vh] rounded-lg border border-slate-800 bg-white"
+                  title={selectedDoc.nomeArquivo}
+                />
+              ) : (
+                /* Outros arquivos */
+                <div className="text-center py-12 space-y-4">
+                  <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl inline-block text-violet-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    </svg>
+                  </div>
+                  <p className="text-sm font-medium text-slate-300">Pré-visualização direta indisponível para este tipo de arquivo.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 flex items-center justify-between gap-3 bg-slate-950/40">
+              <span className="text-xs text-slate-500">
+                Data do envio: {formatDate(selectedDoc.createdAt)}
+              </span>
+
+              <div className="flex items-center gap-3">
+                <a
+                  href={selectedDoc.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center gap-1.5"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                  </svg>
+                  Abrir em nova aba
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDoc(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition-colors border border-slate-700"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
