@@ -1,8 +1,10 @@
-import * as pdf from "pdf-parse";
+import _pdf from "pdf-parse";
+
+// Converte o tipo importado para qualquer (ou tipo chamável) para satisfazer o compilador do TypeScript
+const pdf = _pdf as any;
 
 /**
  * Função utilitária para extrair texto de um buffer de PDF usando a biblioteca 'pdf-parse'.
- * Importada como namespace (`import * as pdf`) para evitar erros de importação default do CommonJS no Next.js.
  * 
  * @param buffer Buffer contendo o conteúdo do arquivo PDF
  * @returns Promessa contendo o texto extraído do PDF
